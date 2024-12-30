@@ -1,0 +1,25 @@
+---
+- name: Ensure main Games directory exists
+  win_directory:
+    path: 'C:\Games'
+    state: present
+
+- name: Ensure Steam directory exists
+  win_directory:
+    path: 'C:\Games\Steam'
+    state: present
+
+- name: Ensure SaveFiles directory exists
+  win_directory:
+    path: 'C:\Games\SaveFiles'
+    state: present
+
+- name: Create symbolic link for Game Save
+  win_shell: |
+     = 'C:\Path\To\Game\Save'
+     = 'C:\Games\SaveFiles\GameName'
+    if (-Not (Test-Path )) {
+        New-Item -ItemType SymbolicLink -Path  -Target 
+    }
+  args:
+    executable: powershell.exe

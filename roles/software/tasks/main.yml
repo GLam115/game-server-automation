@@ -1,0 +1,13 @@
+---
+- name: Install software via Chocolatey
+  win_chocolatey:
+    name:
+      - steam
+      - parsec
+      - qbittorrent
+      - firefox
+      - googlechrome
+      - dolphin
+      - ds4windows
+      - playnite
+    state: present

@@ -1,0 +1,12 @@
+---
+- name: Install Google Drive via Chocolatey
+  win_chocolatey:
+    name: google-drive
+    state: present
+
+- name: Configure Google Drive to sync SaveFiles directory
+  win_shell: |
+    Write-Host "Ensure Google Drive is syncing C:\Games\SaveFiles"
+    # Manual configuration may still be needed here.
+  args:
+    executable: powershell.exe

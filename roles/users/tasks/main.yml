@@ -1,0 +1,14 @@
+---
+- name: Create Admin user
+  win_user:
+    name: AdminUser
+    password: "{{ admin_password }}"
+    groups: Administrators
+    state: present
+
+- name: Create Streamer user
+  win_user:
+    name: Streamer
+    password: "{{ streamer_password }}"
+    groups: Users
+    state: present
