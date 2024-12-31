@@ -12,7 +12,8 @@
     - Pins specified applications to the taskbar.
     - Installs uBlock Origin extension on Google Chrome and Firefox.
     - Enables uBlock Origin in incognito/private mode.
-    
+    - Clones a Git repository into the ES directory.
+
 .NOTES
     Author: Your Name
     Date  : 2024-xx-xx
@@ -152,7 +153,7 @@ function Ensure-Directory {
 
 # Function to set Steam to launch at startup
 function Set-SteamAutoLaunch {
-    $steamPath = "C:\Program Files (x86)\Steam\Steam.exe"
+    $steamPath = (choco where steam)  # Dynamically get path via Chocolatey
     $startupFolder = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
     $shortcutPath = Join-Path -Path $startupFolder -ChildPath "Steam.lnk"
 
@@ -161,7 +162,7 @@ function Set-SteamAutoLaunch {
         $shell = New-Object -ComObject WScript.Shell
         $shortcut = $shell.CreateShortcut($shortcutPath)
         $shortcut.TargetPath = $steamPath
-        $shortcut.WorkingDirectory = "C:\Program Files (x86)\Steam"
+        $shortcut.WorkingDirectory = Split-Path -Parent $steamPath
         $shortcut.Save()
     }
     else {
@@ -171,7 +172,7 @@ function Set-SteamAutoLaunch {
 
 # Function to set Parsec to launch at startup
 function Set-ParsecAutoLaunch {
-    $parsecPath = "C:\Program Files\Parsec\Parsec.exe"
+    $parsecPath = (choco where parsec)  # Dynamically get path via Chocolatey
     $startupFolder = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
     $shortcutPath = Join-Path -Path $startupFolder -ChildPath "Parsec.lnk"
 
@@ -180,7 +181,7 @@ function Set-ParsecAutoLaunch {
         $shell = New-Object -ComObject WScript.Shell
         $shortcut = $shell.CreateShortcut($shortcutPath)
         $shortcut.TargetPath = $parsecPath
-        $shortcut.WorkingDirectory = "C:\Program Files\Parsec"
+        $shortcut.WorkingDirectory = Split-Path -Parent $parsecPath
         $shortcut.Save()
     }
     else {
@@ -192,18 +193,25 @@ function Set-ParsecAutoLaunch {
 function Pin-AppToTaskbar {
     param (
         [Parameter(Mandatory = $true)]
-        [string]$AppPath
+        [string]$AppName
     )
     
-    if (!(Test-Path $AppPath)) {
-        Write-WarningMessage "Application path '$AppPath' does not exist. Skipping pinning."
+    # Use Chocolatey to find the installation path
+    $appPath = choco where $AppName 2>$null
+    if (-not $appPath) {
+        Write-WarningMessage "Could not find installation path for '$AppName'. Skipping pinning."
+        return
+    }
+
+    if (!(Test-Path $appPath)) {
+        Write-WarningMessage "Application path '$appPath' does not exist. Skipping pinning."
         return
     }
 
     try {
         $shell = New-Object -ComObject Shell.Application
-        $folderPath = Split-Path -Parent $AppPath
-        $fileName = Split-Path -Leaf $AppPath
+        $folderPath = Split-Path -Parent $appPath
+        $fileName = Split-Path -Leaf $appPath
         $folder = $shell.Namespace($folderPath)
         $item = $folder.ParseName($fileName)
         
@@ -211,14 +219,14 @@ function Pin-AppToTaskbar {
         $verbs = $item.Verbs() | Where-Object { $_.Name -match "Pin to Taskbar" }
         if ($verbs) {
             $verbs.DoIt()
-            Write-Info "Pinned '$AppPath' to taskbar successfully."
+            Write-Info "Pinned '$AppName' to taskbar successfully."
         }
         else {
-            Write-WarningMessage "Could not find 'Pin to Taskbar' option for '$AppPath'. Ensure the application supports pinning."
+            Write-WarningMessage "Could not find 'Pin to Taskbar' option for '$AppName'. Ensure the application supports pinning."
         }
     }
     catch {
-        Write-WarningMessage "Failed to pin '$AppPath' to taskbar. Error: $_"
+        Write-WarningMessage "Failed to pin '$AppName' to taskbar. Error: $_"
     }
 }
 
@@ -230,7 +238,7 @@ function Pin-AppsToTaskbar {
     )
 
     foreach ($app in $Apps) {
-        Pin-AppToTaskbar -AppPath $app.Path
+        Pin-AppToTaskbar -AppName $app.Name
     }
 }
 
@@ -295,7 +303,7 @@ function Configure-FirefoxUblockOrigin {
                     }
                 )
                 "Preferences" = @{
-                    "extensions.ublock0.run_in_private_browsing" = true
+                    "extensions.ublock0.run_in_private_browsing" = $true
                 }
             }
         }
@@ -326,9 +334,39 @@ function Configure-FirefoxUblockOrigin {
     }
 }
 
+# Function to clone Git repository
+function Clone-GitRepository {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$RepoURL,
+        
+        [Parameter(Mandatory=$true)]
+        [string]$DestinationPath
+    )
+
+    if (-not (Test-Path $DestinationPath)) {
+        Write-Info "Cloning repository from '$RepoURL' to '$DestinationPath'..."
+        git clone $RepoURL $DestinationPath
+        Write-Info "Repository cloned successfully."
+    }
+    else {
+        Write-Info "Repository already exists at '$DestinationPath'. Skipping clone."
+    }
+}
+
 # ----------------------------------------------
 # 2. MAIN SCRIPT LOGIC
 # ----------------------------------------------
+
+# Define user credentials
+$adminUserName = "AdminUser"
+$adminPasswordPlain = "YourSecureAdminPassword123"  # Replace with a strong password
+$streamerUserName = "Streamer"
+$streamerPasswordPlain = "YourSecureStreamerPassword123"  # Replace with a strong password
+
+# Define repository details
+$repoURL = "https://github.com/GLam115/game-server-automation.git"
+$repoDestination = "C:\ES\Media\Games\game-server-automation"
 
 # Ensure the script is run as Administrator
 if (-not (Test-Administrator)) {
@@ -341,23 +379,15 @@ Write-Info "Starting provisioning process..."
 Ensure-Chocolatey
 
 # 2.2 Ensure required packages are installed or updated
-# Updated package list: Removed 'git' and 'python', added 'firefox', 'nordvpn', 'dolphin', 'playnite', 'vlc', 'parsec'
-$packages = @("googlechrome", "firefox", "nordvpn", "dolphin", "playnite", "vlc", "steam", "ds4windows", "parsec")
+# Updated package list: Added 'git'
+$packages = @("googlechrome", "firefox", "nordvpn", "dolphin", "playnite", "vlc", "steam", "ds4windows", "parsec", "git")
 foreach ($pkg in $packages) {
     Ensure-ChocoPackageInstalled -PackageName $pkg
 }
 
 # 2.3 Ensure local users
-# Prompt for AdminUser password securely
-$adminPasswordSecure = Read-Host -Prompt "Enter password for AdminUser" -AsSecureString
-$adminPasswordPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($adminPasswordSecure))
-
-# Prompt for Streamer password securely
-$streamerPasswordSecure = Read-Host -Prompt "Enter password for Streamer" -AsSecureString
-$streamerPasswordPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($streamerPasswordSecure))
-
-Ensure-LocalUser -UserName "AdminUser" -PasswordPlainText $adminPasswordPlain -FullName "Admin User" -Description "Local Admin" -Group "Administrators"
-Ensure-LocalUser -UserName "Streamer"   -PasswordPlainText $streamerPasswordPlain -FullName "Streamer User" -Description "Streaming Account" -Group "Users"
+Ensure-LocalUser -UserName $adminUserName -PasswordPlainText $adminPasswordPlain -FullName "Admin User" -Description "Local Admin" -Group "Administrators"
+Ensure-LocalUser -UserName $streamerUserName -PasswordPlainText $streamerPasswordPlain -FullName "Streamer User" -Description "Streaming Account" -Group "Users"
 
 # 2.4 Create Desired Directory Structure
 Write-Info "Creating directory structure..."
@@ -374,32 +404,36 @@ foreach ($dir in $directories) {
     Ensure-Directory -DirectoryPath $dir
 }
 
-# 2.5 Configure Auto-Launch for Steam and Parsec
+# 2.5 Clone Git Repository
+Write-Info "Cloning Git repository..."
+Clone-GitRepository -RepoURL $repoURL -DestinationPath $repoDestination
+
+# 2.6 Configure Auto-Launch for Steam and Parsec
 Write-Info "Configuring auto-launch for Steam and Parsec..."
 
 Set-SteamAutoLaunch
 Set-ParsecAutoLaunch
 
-# 2.6 Install and Configure uBlock Origin
+# 2.7 Install and Configure uBlock Origin
 Write-Info "Configuring uBlock Origin for Chrome and Firefox..."
 
 Configure-ChromeUblockOrigin
 Configure-FirefoxUblockOrigin
 
-# 2.7 Pin Installed Applications to Taskbar
+# 2.8 Pin Installed Applications to Taskbar
 Write-Info "Pinning applications to the taskbar..."
 
 $appsToPin = @(
-    @{ Name = "Steam"; Path = "C:\Program Files (x86)\Steam\Steam.exe" },
-    @{ Name = "Parsec"; Path = "C:\Program Files\Parsec\Parsec.exe" },
-    @{ Name = "Google Chrome"; Path = "C:\Program Files\Google\Chrome\Application\chrome.exe" },
-    @{ Name = "Firefox"; Path = "C:\Program Files\Mozilla Firefox\firefox.exe" },
-    @{ Name = "NordVPN"; Path = "C:\Program Files\NordVPN\NordVPN.exe" },
-    @{ Name = "Dolphin"; Path = "C:\Program Files\Dolphin\Dolphin.exe" },
-    @{ Name = "Playnite"; Path = "C:\Program Files\Playnite\Playnite.exe" },
-    @{ Name = "VLC"; Path = "C:\Program Files\VideoLAN\VLC\vlc.exe" },
-    @{ Name = "qBittorrent"; Path = "C:\Program Files\qBittorrent\qbittorrent.exe" },
-    @{ Name = "DS4Windows"; Path = "C:\Program Files\DS4Windows\DS4Windows.exe" }
+    @{ Name = "steam" },
+    @{ Name = "parsec" },
+    @{ Name = "googlechrome" },
+    @{ Name = "firefox" },
+    @{ Name = "nordvpn" },
+    @{ Name = "dolphin" },
+    @{ Name = "playnite" },
+    @{ Name = "vlc" },
+    @{ Name = "qbittorrent" },
+    @{ Name = "ds4windows" },
 )
 
 Pin-AppsToTaskbar -Apps $appsToPin
