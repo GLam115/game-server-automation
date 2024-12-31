@@ -10,7 +10,9 @@
     - Sets up the desired directory structure under C:\ES\Media\Games.
     - Configures Steam and Parsec to auto-launch at system startup.
     - Pins specified applications to the taskbar.
-
+    - Installs uBlock Origin extension on Google Chrome and Firefox.
+    - Enables uBlock Origin in incognito/private mode.
+    
 .NOTES
     Author: Your Name
     Date  : 2024-xx-xx
@@ -232,6 +234,98 @@ function Pin-AppsToTaskbar {
     }
 }
 
+# Function to install uBlock Origin on Chrome via policies
+function Configure-ChromeUblockOrigin {
+    $extensionID = "cjpalhdlnbpafiamejdnhcphjbkeiagm"
+    $updateURL = "https://clients2.google.com/service/update2/crx"
+    
+    # Path for ExtensionInstallForcelist
+    $regPath = "HKLM:\SOFTWARE\Policies\Google\Chrome\ExtensionInstallForcelist"
+    if (-not (Test-Path $regPath)) {
+        New-Item -Path $regPath -Force | Out-Null
+    }
+    
+    # Add uBlock Origin to ExtensionInstallForcelist
+    $existing = Get-ItemProperty -Path $regPath -ErrorAction SilentlyContinue
+    if (-not ($existing.PSObject.Properties.Name -contains $extensionID)) {
+        $count = (Get-ChildItem -Path $regPath).Count
+        Set-ItemProperty -Path $regPath -Name "$count" -Value "$extensionID;$updateURL"
+        Write-Info "Added uBlock Origin to Chrome's ExtensionInstallForcelist."
+    }
+    else {
+        Write-Info "uBlock Origin is already in Chrome's ExtensionInstallForcelist."
+    }
+    
+    # Path for ExtensionAllowedIncognito
+    $regPathIncognito = "HKLM:\SOFTWARE\Policies\Google\Chrome\ExtensionAllowedIncognito"
+    if (-not (Test-Path $regPathIncognito)) {
+        New-Item -Path $regPathIncognito -Force | Out-Null
+    }
+    
+    # Add uBlock Origin to ExtensionAllowedIncognito
+    $existingIncognito = Get-ItemProperty -Path $regPathIncognito -ErrorAction SilentlyContinue
+    if (-not ($existingIncognito.PSObject.Properties.Name -contains $extensionID)) {
+        $count = (Get-ChildItem -Path $regPathIncognito).Count
+        Set-ItemProperty -Path $regPathIncognito -Name "$count" -Value "$extensionID"
+        Write-Info "Allowed uBlock Origin to run in incognito mode."
+    }
+    else {
+        Write-Info "uBlock Origin is already allowed in incognito mode."
+    }
+}
+
+# Function to install uBlock Origin on Firefox via policies
+function Configure-FirefoxUblockOrigin {
+    $policyDir = "C:\Program Files\Mozilla Firefox\distribution"
+    $policyFile = "policies.json"
+    $policyPath = Join-Path -Path $policyDir -ChildPath $policyFile
+
+    if (-not (Test-Path $policyDir)) {
+        New-Item -Path $policyDir -ItemType Directory -Force | Out-Null
+        Write-Info "Created Firefox policy directory at '$policyDir'."
+    }
+
+    if (-not (Test-Path $policyPath)) {
+        $policies = @{
+            "policies" = @{
+                "Extensions" = @(
+                    @{
+                        "ID" = "uBlock0@raymondhill.net"
+                        "UpdateURL" = "https://addons.mozilla.org/firefox/downloads/latest/uBlock-Origin/addon-477166-latest.xpi"
+                    }
+                )
+                "Preferences" = @{
+                    "extensions.ublock0.run_in_private_browsing" = true
+                }
+            }
+        }
+        $policies | ConvertTo-Json -Depth 10 | Out-File -FilePath $policyPath -Encoding UTF8
+        Write-Info "Created Firefox policies.json with uBlock Origin installation and private browsing configuration."
+    }
+    else {
+        # Update policies.json if uBlock Origin is not present
+        $policies = Get-Content -Path $policyPath | ConvertFrom-Json
+        $extensionExists = $policies.policies.Extensions | Where-Object { $_.ID -eq "uBlock0@raymondhill.net" }
+        if (-not $extensionExists) {
+            $newExtension = @{
+                "ID" = "uBlock0@raymondhill.net"
+                "UpdateURL" = "https://addons.mozilla.org/firefox/downloads/latest/uBlock-Origin/addon-477166-latest.xpi"
+            }
+            $policies.policies.Extensions += $newExtension
+            # Enable uBlock Origin in private browsing
+            if (-not $policies.policies.Preferences) {
+                $policies.policies.Preferences = @{}
+            }
+            $policies.policies.Preferences["extensions.ublock0.run_in_private_browsing"] = $true
+            $policies | ConvertTo-Json -Depth 10 | Out-File -FilePath $policyPath -Encoding UTF8
+            Write-Info "Updated Firefox policies.json to include uBlock Origin."
+        }
+        else {
+            Write-Info "uBlock Origin is already configured in Firefox policies.json."
+        }
+    }
+}
+
 # ----------------------------------------------
 # 2. MAIN SCRIPT LOGIC
 # ----------------------------------------------
@@ -247,7 +341,7 @@ Write-Info "Starting provisioning process..."
 Ensure-Chocolatey
 
 # 2.2 Ensure required packages are installed or updated
-# Updated package list: Removed 'git' and 'python', added 'parsec', 'firefox', 'nordvpn', 'dolphin', 'playnite', 'vlc'
+# Updated package list: Removed 'git' and 'python', added 'firefox', 'nordvpn', 'dolphin', 'playnite', 'vlc', 'parsec'
 $packages = @("googlechrome", "firefox", "nordvpn", "dolphin", "playnite", "vlc", "steam", "ds4windows", "parsec")
 foreach ($pkg in $packages) {
     Ensure-ChocoPackageInstalled -PackageName $pkg
@@ -286,7 +380,13 @@ Write-Info "Configuring auto-launch for Steam and Parsec..."
 Set-SteamAutoLaunch
 Set-ParsecAutoLaunch
 
-# 2.6 Pin Installed Applications to Taskbar
+# 2.6 Install and Configure uBlock Origin
+Write-Info "Configuring uBlock Origin for Chrome and Firefox..."
+
+Configure-ChromeUblockOrigin
+Configure-FirefoxUblockOrigin
+
+# 2.7 Pin Installed Applications to Taskbar
 Write-Info "Pinning applications to the taskbar..."
 
 $appsToPin = @(
