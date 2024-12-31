@@ -1,3 +1,0 @@
----
-admin_password: "{{ vault_admin_password }}"
-streamer_password: "{{ vault_streamer_password }}"
