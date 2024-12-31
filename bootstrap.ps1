@@ -9,6 +9,7 @@
     - Creates local users if they do not exist.
     - Sets up the desired directory structure under C:\ES\Media\Games.
     - Configures Steam and Parsec to auto-launch at system startup.
+    - Pins specified applications to the taskbar.
 
 .NOTES
     Author: Your Name
@@ -105,7 +106,7 @@ function Ensure-LocalUser {
 
         [string]$FullName = "",
         [string]$Description = "",
-        [string]$Group = "Users"  # Default group
+        [string]$Group = "Users"  # Could be "Administrators" if needed
     )
 
     $user = Get-LocalUser -Name $UserName -ErrorAction SilentlyContinue
@@ -113,17 +114,17 @@ function Ensure-LocalUser {
         Write-Info "User '$UserName' does not exist. Creating..."
         $securePass = ConvertTo-SecureString $PasswordPlainText -AsPlainText -Force
         New-LocalUser -Name $UserName -Password $securePass -FullName $FullName -Description $Description
-        
-        # Add user to the specified group
+
+        # Add user to the desired group
         Write-Info "Adding '$UserName' to '$Group' group."
         Add-LocalGroupMember -Group $Group -Member $UserName
     }
     else {
         Write-Info "User '$UserName' already exists. Ensuring group membership..."
-        $currentGroups = Get-LocalGroupMember -Group $Group -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq $UserName }
-        if (-not $currentGroups) {
+        $isMember = Get-LocalGroupMember -Group $Group -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq $UserName }
+        if (-not $isMember) {
+            Write-Info "Adding '$UserName' to '$Group' group."
             Add-LocalGroupMember -Group $Group -Member $UserName
-            Write-Info "Added '$UserName' to '$Group' group."
         }
         else {
             Write-Info "User '$UserName' is already in group '$Group'. Skipping."
@@ -185,6 +186,52 @@ function Set-ParsecAutoLaunch {
     }
 }
 
+# Function to pin applications to the taskbar
+function Pin-AppToTaskbar {
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]$AppPath
+    )
+    
+    if (!(Test-Path $AppPath)) {
+        Write-WarningMessage "Application path '$AppPath' does not exist. Skipping pinning."
+        return
+    }
+
+    try {
+        $shell = New-Object -ComObject Shell.Application
+        $folderPath = Split-Path -Parent $AppPath
+        $fileName = Split-Path -Leaf $AppPath
+        $folder = $shell.Namespace($folderPath)
+        $item = $folder.ParseName($fileName)
+        
+        # Find the 'Pin to taskbar' verb
+        $verbs = $item.Verbs() | Where-Object { $_.Name -match "Pin to Taskbar" }
+        if ($verbs) {
+            $verbs.DoIt()
+            Write-Info "Pinned '$AppPath' to taskbar successfully."
+        }
+        else {
+            Write-WarningMessage "Could not find 'Pin to Taskbar' option for '$AppPath'. Ensure the application supports pinning."
+        }
+    }
+    catch {
+        Write-WarningMessage "Failed to pin '$AppPath' to taskbar. Error: $_"
+    }
+}
+
+# Function to pin multiple applications to the taskbar
+function Pin-AppsToTaskbar {
+    param (
+        [Parameter(Mandatory = $true)]
+        [array]$Apps
+    )
+
+    foreach ($app in $Apps) {
+        Pin-AppToTaskbar -AppPath $app.Path
+    }
+}
+
 # ----------------------------------------------
 # 2. MAIN SCRIPT LOGIC
 # ----------------------------------------------
@@ -200,21 +247,23 @@ Write-Info "Starting provisioning process..."
 Ensure-Chocolatey
 
 # 2.2 Ensure required packages are installed or updated
-$packages = @("git", "python", "googlechrome", "qbittorrent", "steam", "ds4windows")
+# Updated package list: Removed 'git' and 'python', added 'parsec', 'firefox', 'nordvpn', 'dolphin', 'playnite', 'vlc'
+$packages = @("googlechrome", "firefox", "nordvpn", "dolphin", "playnite", "vlc", "steam", "ds4windows", "parsec")
 foreach ($pkg in $packages) {
     Ensure-ChocoPackageInstalled -PackageName $pkg
 }
 
 # 2.3 Ensure local users
-# NOTE: Replace the password placeholders with secure methods to handle passwords
-# Example: Using encrypted credentials or prompting for input
-$adminUsername = "AdminUser"
-$adminPassword = "P@ssw0rd123"   # Replace with secure method
-$streamerUsername = "Streamer"
-$streamerPassword = "P@ssw0rd123" # Replace with secure method
+# Prompt for AdminUser password securely
+$adminPasswordSecure = Read-Host -Prompt "Enter password for AdminUser" -AsSecureString
+$adminPasswordPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($adminPasswordSecure))
 
-Ensure-LocalUser -UserName $adminUsername -PasswordPlainText $adminPassword -FullName "Admin User" -Description "Local Admin" -Group "Administrators"
-Ensure-LocalUser -UserName $streamerUsername -PasswordPlainText $streamerPassword -FullName "Streamer User" -Description "Streaming Account" -Group "Users"
+# Prompt for Streamer password securely
+$streamerPasswordSecure = Read-Host -Prompt "Enter password for Streamer" -AsSecureString
+$streamerPasswordPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($streamerPasswordSecure))
+
+Ensure-LocalUser -UserName "AdminUser" -PasswordPlainText $adminPasswordPlain -FullName "Admin User" -Description "Local Admin" -Group "Administrators"
+Ensure-LocalUser -UserName "Streamer"   -PasswordPlainText $streamerPasswordPlain -FullName "Streamer User" -Description "Streaming Account" -Group "Users"
 
 # 2.4 Create Desired Directory Structure
 Write-Info "Creating directory structure..."
@@ -236,6 +285,24 @@ Write-Info "Configuring auto-launch for Steam and Parsec..."
 
 Set-SteamAutoLaunch
 Set-ParsecAutoLaunch
+
+# 2.6 Pin Installed Applications to Taskbar
+Write-Info "Pinning applications to the taskbar..."
+
+$appsToPin = @(
+    @{ Name = "Steam"; Path = "C:\Program Files (x86)\Steam\Steam.exe" },
+    @{ Name = "Parsec"; Path = "C:\Program Files\Parsec\Parsec.exe" },
+    @{ Name = "Google Chrome"; Path = "C:\Program Files\Google\Chrome\Application\chrome.exe" },
+    @{ Name = "Firefox"; Path = "C:\Program Files\Mozilla Firefox\firefox.exe" },
+    @{ Name = "NordVPN"; Path = "C:\Program Files\NordVPN\NordVPN.exe" },
+    @{ Name = "Dolphin"; Path = "C:\Program Files\Dolphin\Dolphin.exe" },
+    @{ Name = "Playnite"; Path = "C:\Program Files\Playnite\Playnite.exe" },
+    @{ Name = "VLC"; Path = "C:\Program Files\VideoLAN\VLC\vlc.exe" },
+    @{ Name = "qBittorrent"; Path = "C:\Program Files\qBittorrent\qbittorrent.exe" },
+    @{ Name = "DS4Windows"; Path = "C:\Program Files\DS4Windows\DS4Windows.exe" }
+)
+
+Pin-AppsToTaskbar -Apps $appsToPin
 
 # ----------------------------------------------
 # 3. REMOVED REGISTRY CONFIGURATION
