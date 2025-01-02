@@ -151,44 +151,6 @@ function Ensure-Directory {
     }
 }
 
-# Function to set Steam to launch at startup
-function Set-SteamAutoLaunch {
-    $steamPath = (choco where steam)  # Dynamically get path via Chocolatey
-    $startupFolder = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
-    $shortcutPath = Join-Path -Path $startupFolder -ChildPath "Steam.lnk"
-
-    if (-not (Test-Path $shortcutPath)) {
-        Write-Info "Creating Steam shortcut in Startup folder for auto-launch..."
-        $shell = New-Object -ComObject WScript.Shell
-        $shortcut = $shell.CreateShortcut($shortcutPath)
-        $shortcut.TargetPath = $steamPath
-        $shortcut.WorkingDirectory = Split-Path -Parent $steamPath
-        $shortcut.Save()
-    }
-    else {
-        Write-Info "Steam shortcut already exists in Startup folder. Skipping."
-    }
-}
-
-# Function to set Parsec to launch at startup
-function Set-ParsecAutoLaunch {
-    $parsecPath = (choco where parsec)  # Dynamically get path via Chocolatey
-    $startupFolder = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
-    $shortcutPath = Join-Path -Path $startupFolder -ChildPath "Parsec.lnk"
-
-    if (-not (Test-Path $shortcutPath)) {
-        Write-Info "Creating Parsec shortcut in Startup folder for auto-launch..."
-        $shell = New-Object -ComObject WScript.Shell
-        $shortcut = $shell.CreateShortcut($shortcutPath)
-        $shortcut.TargetPath = $parsecPath
-        $shortcut.WorkingDirectory = Split-Path -Parent $parsecPath
-        $shortcut.Save()
-    }
-    else {
-        Write-Info "Parsec shortcut already exists in Startup folder. Skipping."
-    }
-}
-
 # Function to pin applications to the taskbar
 function Pin-AppToTaskbar {
     param (
@@ -380,7 +342,7 @@ Ensure-Chocolatey
 
 # 2.2 Ensure required packages are installed or updated
 # Updated package list: Added 'git'
-$packages = @("googlechrome", "firefox", "nordvpn", "dolphin", "playnite", "vlc", "steam", "ds4windows", "parsec", "git")
+$packages = @("googlechrome", "firefox", "dolphin", "qbittorrent", "playnite", "vlc", "steam", "steamcmd", "ds4windows", "parsec", "git")
 foreach ($pkg in $packages) {
     Ensure-ChocoPackageInstalled -PackageName $pkg
 }
@@ -411,8 +373,24 @@ Clone-GitRepository -RepoURL $repoURL -DestinationPath $repoDestination
 # 2.6 Configure Auto-Launch for Steam and Parsec
 Write-Info "Configuring auto-launch for Steam and Parsec..."
 
-Set-SteamAutoLaunch
-Set-ParsecAutoLaunch
+$SteamUsername = $env:STEAM_USERNAME
+$SteamPassword = $env:STEAM_PASSWORD
+
+if (-not $SteamUsername -or -not $SteamPassword) {
+    Write-Error "Environment variables STEAM_USERNAME and STEAM_PASSWORD must be set. Skipping steam login..."
+} else {
+    Write-Output "Logging into Steam..."
+    Start-Process -NoNewWindow -FilePath $SteamCMDPath -ArgumentList "+login $SteamUsername $SteamPassword +quit" -Wait
+}
+
+
+# Check for Steam Guard prompt (manual intervention required if it appears)
+if ($LastExitCode -ne 0) {
+    Write-Error "Steam login failed. Please check your credentials or handle Steam Guard verification."
+    #exit 1
+}
+
+Write-Output "Steam login successful."
 
 # 2.7 Install and Configure uBlock Origin
 Write-Info "Configuring uBlock Origin for Chrome and Firefox..."
@@ -428,12 +406,11 @@ $appsToPin = @(
     @{ Name = "parsec" },
     @{ Name = "googlechrome" },
     @{ Name = "firefox" },
-    @{ Name = "nordvpn" },
     @{ Name = "dolphin" },
     @{ Name = "playnite" },
     @{ Name = "vlc" },
     @{ Name = "qbittorrent" },
-    @{ Name = "ds4windows" },
+    @{ Name = "ds4windows" }
 )
 
 Pin-AppsToTaskbar -Apps $appsToPin
