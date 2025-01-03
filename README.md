@@ -1,6 +1,6 @@
 # Entertainment Server Automation
 
-Automate the setup of a Windows-based entertainment server for gaming and media management using Ansible and Chocolatey.
+Automate the setup of a Windows-based entertainment server for gaming and media management.
 
 ## Features
 
