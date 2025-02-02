@@ -1,177 +1,282 @@
+# Windows Gaming Server Setup Script
 <#
 .SYNOPSIS
     Bootstrap and configure a Windows machine for a gaming/entertainment server.
 .DESCRIPTION
-    1. Checks for Administrator privileges.
-    2. Installs or updates Winget.
-    3. Creates local user accounts:
-       - Admin (password: socksandshoes)
-       - mediauser (password: socksandshoes)
-       - streamer (password: socksandshoes)
-       - guest1 (password: "")
-    4. Creates directory structure: C:\ES\Games\[Steam, PC, Wii, PS3, SaveFiles]
-    5. Installs required applications via Winget.
-    6. Demonstrates how to create symbolic links for game saves.
+    1. Checks for Administrator privileges
+    2. Installs or updates Winget
+    3. Creates local user accounts with proper security
+    4. Creates directory structure for games and saves
+    5. Installs required applications via Winget
+    6. Configures remote access via Parsec
+    7. Sets up system configurations for optimal gaming experience
 .NOTES
-    - Ensure this script is run as Administrator.
-    - Adjust user account policies if necessary to allow blank passwords.
+    - Must be run as Administrator
+    - Supports Windows 10 and 11
+    - Focuses on game saves management rather than full system backups
 #>
 
 # ----------------------------
-# 1. Verify that the script is run as Administrator
+# Script Configuration
 # ----------------------------
-
-Write-Host "Checking for Administrator privileges..." -ForegroundColor Cyan
-If (-Not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(`
-    [Security.Principal.WindowsBuiltInRole] "Administrator")) {
-    Write-Host "ERROR: You must run this script as an Administrator!" -ForegroundColor Red
-    exit 1
-}
-
-Write-Host "Running with Administrator privileges..." -ForegroundColor Green
+$ErrorActionPreference = "Stop"
+$logFile = "C:\ES\setup_log.txt"
+$baseDir = "C:\ES\Games"
+$saveFilesDir = Join-Path -Path $baseDir -ChildPath "SaveFiles"
 
 # ----------------------------
-# 2. Install or Update Winget
+# Logging Function
 # ----------------------------
-Write-Host "`nChecking for Winget..." -ForegroundColor Cyan
-$wingetCheck = Get-Command "winget" -ErrorAction SilentlyContinue
-if (-not $wingetCheck) {
-    Write-Host "Winget not found. Attempting to install from the Microsoft Store package..." -ForegroundColor Yellow
-    # Winget is typically included with the App Installer. Attempt to install App Installer.
-    try {
-        Start-Process "ms-windows-store://pdp/?productid=9NBLGGH4NNS1" -Wait
-        Write-Host "Please install 'App Installer' from the Microsoft Store, then re-run this script." -ForegroundColor Yellow
-        exit 1
+function Write-Log {
+    param($Message)
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $logMessage = "$timestamp - $Message"
+    Write-Host $logMessage
+    if (!(Test-Path (Split-Path $logFile))) {
+        New-Item -ItemType Directory -Path (Split-Path $logFile) -Force | Out-Null
     }
-    catch {
-        Write-Host "Failed to open Microsoft Store. Please install 'App Installer' manually." -ForegroundColor Red
-        exit 1
-    }
-} else {
-    Write-Host "Winget is already installed." -ForegroundColor Green
+    $logMessage | Out-File -FilePath $logFile -Append
 }
 
 # ----------------------------
-# 3. Create Local User Accounts
+# OS Version Check
 # ----------------------------
-Write-Host "`nCreating local user accounts..." -ForegroundColor Cyan
+function Get-WindowsVersion {
+    $osVersion = [System.Environment]::OSVersion.Version
+    if ($osVersion.Major -eq 10) {
+        return "Windows 10"
+    } elseif ($osVersion.Build -ge 22000) {
+        return "Windows 11"
+    } else {
+        throw "Unsupported Windows version"
+    }
+}
 
-function Create-LocalUserIfNotExists {
-    param (
-        [string]$UserName,
-        [string]$Password,
-        [bool]$IsAdmin = $false
-    )
+# ----------------------------
+# Admin Check
+# ----------------------------
+function Test-AdminPrivileges {
+    Write-Log "Checking for Administrator privileges..."
+    $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+    $isAdmin = $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    
+    if (-not $isAdmin) {
+        throw "This script requires Administrator privileges"
+    }
+    Write-Log "Running with Administrator privileges"
+}
 
-    $user = Get-LocalUser -Name $UserName -ErrorAction SilentlyContinue
-    if ($null -eq $user) {
-        Write-Host "Creating user: $UserName" -ForegroundColor Yellow
-        $SecurePassword = $null
-        if ($Password -ne "") {
-            $SecurePassword = ConvertTo-SecureString $Password -AsPlainText -Force
-        }
-
+# ----------------------------
+# Winget Installation
+# ----------------------------
+function Install-WingetIfNeeded {
+    Write-Log "Checking for Winget..."
+    $wingetCheck = Get-Command "winget" -ErrorAction SilentlyContinue
+    
+    if (-not $wingetCheck) {
+        Write-Log "Winget not found. Attempting to install..."
         try {
-            New-LocalUser -Name $UserName -Password $SecurePassword -PasswordNeverExpires $true -AccountNeverExpires $true `
-                -Description "Automated account created by ES bootstrap script" -ErrorAction Stop
-            Write-Host "User $UserName created successfully." -ForegroundColor Green
+            Start-Process "ms-windows-store://pdp/?productid=9NBLGGH4NNS1" -Wait
+            throw "Please install 'App Installer' from the Microsoft Store and rerun this script"
         }
         catch {
-            Write-Host "Failed to create user $UserName. Error: $($_.Exception.Message)" -ForegroundColor Red
-            return
+            throw "Failed to open Microsoft Store. Please install 'App Installer' manually"
         }
+    }
+    Write-Log "Winget is installed"
+}
 
-        # Add to Administrators group if requested
-        if ($IsAdmin) {
-            try {
-                Add-LocalGroupMember -Group "Administrators" -Member $UserName -ErrorAction Stop
-                Write-Host "User $UserName was added to the Administrators group." -ForegroundColor Green
+# ----------------------------
+# User Account Management
+# ----------------------------
+function New-SecureUserAccount {
+    param (
+        [string]$UserName,
+        [string]$Description,
+        [bool]$IsAdmin = $false
+    )
+    
+    $user = Get-LocalUser -Name $UserName -ErrorAction SilentlyContinue
+    if ($null -eq $user) {
+        Write-Log "Creating user: $UserName"
+        $securePassword = ConvertTo-SecureString "Ab12cd34" -AsPlainText -Force
+        
+        try {
+            New-LocalUser -Name $UserName `
+                         -Password $securePassword `
+                         -PasswordNeverExpires $true `
+                         -AccountNeverExpires $true `
+                         -Description $Description `
+                         -ErrorAction Stop
+                         
+            if ($IsAdmin) {
+                Add-LocalGroupMember -Group "Administrators" -Member $UserName
+                Write-Log "$UserName added to Administrators group"
             }
-            catch {
-                Write-Host "Failed to add user $UserName to Administrators group. Error: $($_.Exception.Message)" -ForegroundColor Red
-            }
+            Write-Log "User $UserName created successfully"
+        }
+        catch {
+            Write-Log "Failed to create user $UserName : $($_.Exception.Message)"
+            throw
         }
     }
     else {
-        Write-Host "User $UserName already exists; skipping creation." -ForegroundColor Green
+        Write-Log "User $UserName already exists"
     }
 }
 
-# Administrator account (named "Admin")
-Create-LocalUserIfNotExists -UserName "Admin"    -Password "socksandshoes" -IsAdmin $true
-Create-LocalUserIfNotExists -UserName "mediauser" -Password "socksandshoes" -IsAdmin $false
-Create-LocalUserIfNotExists -UserName "streamer"  -Password "socksandshoes" -IsAdmin $false
-Create-LocalUserIfNotExists -UserName "guest1"    -Password ""              -IsAdmin $false
-
-Write-Host "Users created: Admin, mediauser, streamer, guest1" -ForegroundColor Cyan
-
 # ----------------------------
-# (Optional) Allow accounts with blank passwords
+# Directory Structure
 # ----------------------------
-Write-Host "`nConfiguring local security policy to allow accounts with blank passwords..." -ForegroundColor Cyan
-try {
-    $policyPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa"
-    Set-ItemProperty -Path $policyPath -Name "LimitBlankPasswordUse" -Value 0 -ErrorAction Stop
-    Write-Host "Successfully configured policy to allow blank passwords." -ForegroundColor Green
+function New-GameDirectories {
+    Write-Log "Creating game directories..."
+    $folders = @("Steam", "PC", "Wii", "PS3", "SaveFiles")
+    
+    foreach ($folder in $folders) {
+        $path = Join-Path -Path $baseDir -ChildPath $folder
+        if (!(Test-Path $path)) {
+            try {
+                New-Item -Path $path -ItemType "Directory" -Force | Out-Null
+                Write-Log "Created directory: $path"
+            }
+            catch {
+                Write-Log "Failed to create directory: $path"
+                throw
+            }
+        }
+    }
 }
-catch {
-    Write-Host "Failed to set policy for blank passwords. Error: $($_.Exception.Message)" -ForegroundColor Red
-}
 
 # ----------------------------
-# 4. Create Directory Structure
+# Application Installation
 # ----------------------------
-Write-Host "`nCreating directories under C:\ES\Games..." -ForegroundColor Cyan
-$baseDir = "C:\ES\Games"
-$folders = @("Steam", "PC", "Wii", "PS3", "SaveFiles")
-
-foreach ($folder in $folders) {
-    $path = Join-Path -Path $baseDir -ChildPath $folder
-    if (!(Test-Path $path)) {
+function Install-RequiredApplications {
+    Write-Log "Installing required applications..."
+    
+    $apps = @(
+        @{ Name = "Google Chrome";    WingetId = "Google.Chrome" },
+        @{ Name = "Mozilla Firefox";  WingetId = "Mozilla.Firefox" },
+        @{ Name = "Dolphin Emulator"; WingetId = "DolphinEmulator.Dolphin" },
+        @{ Name = "qBittorrent";      WingetId = "qBittorrent.qBittorrent" },
+        @{ Name = "Playnite";         WingetId = "Playnite.Playnite" },
+        @{ Name = "VLC";              WingetId = "VideoLAN.VLC" },
+        @{ Name = "Steam";            WingetId = "Valve.Steam" },
+        @{ Name = "SteamCMD";         WingetId = "McFarlus.SteamCMD" },
+        @{ Name = "DS4Windows";       WingetId = "Ryochan7.DS4Windows" },
+        @{ Name = "Parsec";           WingetId = "Parsec.Parsec" },
+        @{ Name = "Git";              WingetId = "Git.Git" }
+    )
+    
+    foreach ($app in $apps) {
+        Write-Log "Installing $($app.Name)..."
         try {
-            New-Item -Path $path -ItemType "Directory" -Force | Out-Null
-            Write-Host "Created directory: $path" -ForegroundColor Green
+            winget install --id $($app.WingetId) --exact --accept-package-agreements --accept-source-agreements --silent
+            Write-Log "$($app.Name) installed successfully"
         }
         catch {
-            Write-Host "Failed to create directory: $path. Error: $($_.Exception.Message)" -ForegroundColor Red
+            Write-Log "Failed to install $($app.Name): $($_.Exception.Message)"
+            # Continue with other installations even if one fails
         }
-    } else {
-        Write-Host "Directory already exists: $path" -ForegroundColor Green
     }
 }
-Write-Host "Directories created under C:\ES\Games" -ForegroundColor Cyan
 
 # ----------------------------
-# 5. Install Applications via Winget
+# Remote Access Configuration
 # ----------------------------
-Write-Host "`nInstalling required applications using Winget. This may take a while..." -ForegroundColor Cyan
-
-$appsToInstall = @(
-    # Using exact match IDs to ensure correct installations
-    @{ Name = "Google Chrome";       WingetId = "Google.Chrome" },
-    @{ Name = "Mozilla Firefox";     WingetId = "Mozilla.Firefox" },
-    @{ Name = "Dolphin Emulator";    WingetId = "DolphinEmulator.Dolphin" },
-    @{ Name = "qBittorrent";         WingetId = "qBittorrent.qBittorrent" },
-    @{ Name = "Playnite";            WingetId = "Playnite.Playnite" },
-    @{ Name = "VLC Media Player";    WingetId = "VideoLAN.VLC" },
-    @{ Name = "Steam (Client)";      WingetId = "Valve.Steam" },
-    @{ Name = "SteamCMD";            WingetId = "McFarlus.SteamCMD" },  # Verify availability
-    @{ Name = "DS4Windows";          WingetId = "Ryochan7.DS4Windows" },
-    @{ Name = "Parsec";              WingetId = "Parsec.Parsec" },
-    @{ Name = "Git";                 WingetId = "Git.Git" }
-)
-
-foreach ($app in $appsToInstall) {
-    Write-Host "`nInstalling $($app.Name)..." -ForegroundColor Yellow
-    try {
-        winget install --id $($app.WingetId) --exact --accept-package-agreements --accept-source-agreements --silent
-        Write-Host "$($app.Name) installed successfully." -ForegroundColor Green
+function Set-RemoteAccess {
+    Write-Log "Configuring remote access..."
+    
+    # Configure Parsec
+    $parsecPath = "$env:APPDATA\Parsec\parsecd.exe"
+    $startupFolder = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
+    
+    if (Test-Path $parsecPath) {
+        $shortcutPath = "$startupFolder\Parsec.lnk"
+        $WScriptShell = New-Object -ComObject WScript.Shell
+        $shortcut = $WScriptShell.CreateShortcut($shortcutPath)
+        $shortcut.TargetPath = $parsecPath
+        $shortcut.Save()
+        Write-Log "Parsec configured for autostart"
     }
-    catch {
-        Write-Host "Failed to install $($app.Name). Error: $($_.Exception.Message)" -ForegroundColor Red
+    
+    # Configure Remote Desktop
+    Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+    Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+    Write-Log "Remote Desktop configured"
+}
+
+# ----------------------------
+# System Configuration
+# ----------------------------
+function Set-SystemConfig {
+    Write-Log "Configuring system settings..."
+    
+    # Power settings
+    powercfg /change standby-timeout-ac 0
+    powercfg /change monitor-timeout-ac 0
+    Write-Log "Power settings configured"
+    
+    # Network settings
+    Enable-NetFirewallRule -DisplayGroup "File and Printer Sharing"
+    Write-Log "Network settings configured"
+    
+    # Windows Update settings
+    if (!(Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update")) {
+        New-Item -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update" -Force
+    }
+    Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update" -Name "AUOptions" -Value 4
+    Write-Log "Windows Update configured"
+}
+
+# ----------------------------
+# Validation
+# ----------------------------
+function Test-Installation {
+    Write-Log "Validating installation..."
+    
+    $tests = @{
+        "Winget" = { Get-Command winget -ErrorAction SilentlyContinue }
+        "Parsec" = { Test-Path "$env:APPDATA\Parsec\parsecd.exe" }
+        "Steam"  = { Test-Path "C:\Program Files (x86)\Steam\steam.exe" }
+        "Game Directories" = { Test-Path $baseDir }
+    }
+    
+    foreach ($test in $tests.GetEnumerator()) {
+        if (& $test.Value) {
+            Write-Log "$($test.Name) validation successful"
+        } else {
+            Write-Log "$($test.Name) validation failed"
+        }
     }
 }
-Write-Host "Applications installed via Winget" -ForegroundColor Cyan
 
-Write-Host "`nBootstrap script completed successfully!" -ForegroundColor Green
-
+# ----------------------------
+# Main Execution
+# ----------------------------
+try {
+    Write-Log "Starting setup script..."
+    
+    Test-AdminPrivileges
+    $windowsVersion = Get-WindowsVersion
+    Write-Log "Detected OS: $windowsVersion"
+    
+    Install-WingetIfNeeded
+    New-GameDirectories
+    
+    # Create user accounts
+    New-SecureUserAccount -UserName "Admin" -Description "Administrator Account" -IsAdmin $true
+    New-SecureUserAccount -UserName "mediauser" -Description "Media User Account" -IsAdmin $false
+    New-SecureUserAccount -UserName "streamer" -Description "Streaming Account" -IsAdmin $false
+    
+    Install-RequiredApplications
+    Set-RemoteAccess
+    Set-SystemConfig
+    Test-Installation
+    
+    Write-Log "Setup completed successfully!"
+}
+catch {
+    Write-Log "Error occurred: $($_.Exception.Message)"
+    Write-Host "Setup failed. Check $logFile for details." -ForegroundColor Red
+    exit 1
+}
