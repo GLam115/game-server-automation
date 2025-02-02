@@ -20,8 +20,16 @@
 # Script Configuration
 # ----------------------------
 $ErrorActionPreference = "Stop"
-$logFile = "C:\ES\setup_log.txt"
-$baseDir = "C:\ES\Games"
+
+# Allow override of base directory through environment variable
+$baseDir = if ($env:ES_BASE_DIR) { $env:ES_BASE_DIR } else { "C:\ES" }
+$gamesDir = Join-Path $baseDir "Games"
+$logFile = Join-Path $baseDir "setup_log.txt"
+
+# Create base directory if it doesn't exist
+if (!(Test-Path $baseDir)) {
+    New-Item -Path $baseDir -ItemType Directory -Force | Out-Null
+}
 
 # ----------------------------
 # Logging Function
@@ -187,7 +195,9 @@ function Set-ParsecConfig {
     Write-Log "Configuring Parsec..."
     
     # Configure Parsec autostart
-    $parsecPath = "$env:APPDATA\Parsec\parsecd.exe"
+    # Determine Parsec paths dynamically
+    $parsecDir = "$env:APPDATA\Parsec"
+    $parsecPath = Join-Path $parsecDir "parsecd.exe"
     $startupFolder = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
     $parsecDataDir = "$env:APPDATA\Parsec"
     
@@ -240,7 +250,28 @@ wayland=0
 function Set-SteamConfig {
     Write-Log "Configuring Steam..."
     
-    $steamPath = "C:\Program Files (x86)\Steam"
+    # Determine Steam path based on architecture and existing installation
+    $steamPath = $null
+    $possibleSteamPaths = @(
+        "${env:ProgramFiles(x86)}\Steam",
+        "$env:ProgramFiles\Steam",
+        "$env:ProgramW6432\Steam"
+    )
+    
+    foreach ($path in $possibleSteamPaths) {
+        if (Test-Path $path) {
+            $steamPath = $path
+            break
+        }
+    }
+    
+    if (!$steamPath) {
+        # If Steam isn't found, default to the most appropriate path based on architecture
+        if ([Environment]::Is64BitOperatingSystem) {
+            $steamPath = "${env:ProgramFiles(x86)}\Steam"
+        } else {
+            $steamPath = "$env:ProgramFiles\Steam"
+        }
     
     if (Test-Path $steamPath) {
         # Check for Steam credentials in environment
@@ -352,4 +383,3 @@ catch {
     Write-Host "Setup failed. Check $logFile for details." -ForegroundColor Red
     exit 1
 }
-
